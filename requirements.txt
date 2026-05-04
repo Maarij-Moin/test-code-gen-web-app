@@ -1,5 +1,25 @@
+# Web framework
 fastapi
-uvicorn
-gitpython
+uvicorn[standard]
 pydantic
 python-multipart
+
+# Git integration
+gitpython
+
+# LangChain stack (text splitting, document model, community integrations)
+langchain
+langchain-core
+langchain-community
+langchain-text-splitters
+
+# Vector database (Chroma)
+chromadb
+
+# Embedding model (HuggingFace)
+sentence-transformers
+transformers
+
+# PyTorch (required by sentence-transformers for model inference)
+# Use the CPU-only build to keep install size small; swap for a GPU build if needed
+torch --index-url https://download.pytorch.org/whl/cpu
