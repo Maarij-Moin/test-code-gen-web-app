@@ -1,23 +1,26 @@
 import logging
+import traceback
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 
 from app.routes.repo_routes import router as repo_router
 
 # ---------------------------------------------------------------------------
-# Logging
+# Logging — structured, module-named loggers propagate here
 # ---------------------------------------------------------------------------
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s  %(levelname)-8s  %(name)s — %(message)s",
+    datefmt="%Y-%m-%dT%H:%M:%S",
 )
 logger = logging.getLogger(__name__)
 
 
 # ---------------------------------------------------------------------------
-# Lifespan: runs on startup / shutdown
+# Lifespan: startup / shutdown hooks
 # ---------------------------------------------------------------------------
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -53,6 +56,31 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# ---------------------------------------------------------------------------
+# Global exception handler — catches anything that slipped through the
+# route-level handlers and ensures a JSON error body is always returned.
+# ---------------------------------------------------------------------------
+@app.exception_handler(Exception)
+async def global_exception_handler(request: Request, exc: Exception) -> JSONResponse:
+    """Catch-all handler for unhandled exceptions.
+
+    Logs the full traceback at ERROR level (without leaking it to the caller)
+    and returns a generic 500 JSON response.
+    """
+    logger.error(
+        "Unhandled exception on %s %s: %s\n%s",
+        request.method,
+        request.url.path,
+        exc,
+        traceback.format_exc(),
+    )
+    return JSONResponse(
+        status_code=500,
+        content={
+            "detail": "An unexpected internal error occurred. Check server logs for details."
+        },
+    )
 
 # ---------------------------------------------------------------------------
 # Routers
