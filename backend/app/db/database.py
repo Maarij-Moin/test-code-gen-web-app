@@ -2,27 +2,42 @@
 
 from __future__ import annotations
 
+import logging
 from collections.abc import AsyncGenerator
 
+from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import (
     AsyncEngine,
     AsyncSession,
     async_sessionmaker,
     create_async_engine,
 )
-from sqlalchemy.exc import SQLAlchemyError
+from sqlalchemy.pool import NullPool
 
 from app.core.config import settings
 
 
+logger = logging.getLogger(__name__)
+
+DEFAULT_SQLITE_URL = "sqlite+aiosqlite:///./app.db"
+
+
+def _resolve_database_url() -> str:
+    url = settings.DATABASE_URL.strip()
+    if url.startswith("sqlite"):
+        return url
+    logger.warning("Non-SQLite DATABASE_URL detected. Falling back to SQLite.")
+    return DEFAULT_SQLITE_URL
+
+
+DATABASE_URL = _resolve_database_url()
+
 engine: AsyncEngine = create_async_engine(
-    settings.DATABASE_URL,
+    DATABASE_URL,
     echo=settings.DEBUG,
     pool_pre_ping=True,
-    pool_size=10,
-    max_overflow=20,
-    pool_timeout=30,
-    pool_recycle=1800,
+    poolclass=NullPool,
+    connect_args={"check_same_thread": False},
 )
 
 AsyncSessionLocal = async_sessionmaker(
@@ -44,6 +59,15 @@ async def get_async_session() -> AsyncGenerator[AsyncSession, None]:
             raise
         finally:
             await session.close()
+
+
+async def init_auth_db() -> None:
+    """Ensure auth tables exist for SQLite deployments."""
+
+    from app.models.user_model import AuthBase
+
+    async with engine.begin() as conn:
+        await conn.run_sync(AuthBase.metadata.create_all)
 
 
 async def dispose_engine() -> None:

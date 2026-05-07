@@ -9,10 +9,11 @@ from sqlalchemy.exc import OperationalError
 
 from app.core.logging_config import setup_logging
 from app.core.config import settings
-from app.api.routes.auth_routes import router as auth_router
+from app.routes.auth_routes import router as auth_router
 from app.api.routes.repo_routes import router as repo_router
 from app.api.routes.test_routes import router as test_router
 from app.api.routes.webhook_routes import router as webhook_router
+from app.db.database import init_auth_db
 
 # ---------------------------------------------------------------------------
 # Logging — centralized config (console + rotating file handlers)
@@ -27,6 +28,7 @@ logger = logging.getLogger(__name__)
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     logger.info("Automated Test-Generation API starting up …")
+    await init_auth_db()
     yield
     logger.info("Automated Test-Generation API shutting down …")
 
