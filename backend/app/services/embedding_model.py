@@ -1,31 +1,28 @@
 import logging
 import threading
-from langchain_community.embeddings import HuggingFaceEmbeddings
+from langchain_community.embeddings.fastembed import FastEmbedEmbeddings
 
 logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
 # Embedding model — singleton (loaded once, reused across all calls)
 # ---------------------------------------------------------------------------
-_embeddings_instance: HuggingFaceEmbeddings | None = None
+_embeddings_instance: FastEmbedEmbeddings | None = None
 _embeddings_lock = threading.Lock()
 
-def _get_embeddings() -> HuggingFaceEmbeddings:
+def _get_embeddings() -> FastEmbedEmbeddings:
     """Return the shared embedding model, loading it on first call only.
 
-    Thread-safe singleton: the model is expensive to load (~1-2 s and several
-    hundred MB of RAM).  Reusing a single instance avoids that cost on every
-    call to process_and_store_codebase() or load_vectorstore().
+    Thread-safe singleton: FastEmbed is efficient and uses ONNX Runtime.
+    Reusing a single instance avoids redundant memory allocation.
     """
     global _embeddings_instance
     if _embeddings_instance is None:
         with _embeddings_lock:
             if _embeddings_instance is None:  # double-checked locking
-                logger.info("Loading embedding model (first call)...")
-                _embeddings_instance = HuggingFaceEmbeddings(
-                    model_name="BAAI/bge-base-en-v1.5",
-                    model_kwargs={"device": "cpu"},
-                    encode_kwargs={"normalize_embeddings": True},
+                logger.info("Loading FastEmbed model (first call)...")
+                _embeddings_instance = FastEmbedEmbeddings(
+                    model_name="BAAI/bge-base-en-v1.5"
                 )
-                logger.info("Embedding model loaded.")
+                logger.info("FastEmbed model loaded.")
     return _embeddings_instance

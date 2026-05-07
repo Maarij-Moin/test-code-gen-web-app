@@ -36,13 +36,8 @@ langchain-text-splitters
 # Vector database (Chroma)
 chromadb
 
-# Embedding model (HuggingFace)
-sentence-transformers
-transformers
-
-# PyTorch (required by sentence-transformers for model inference)
-# Use the CPU-only build to keep install size small; swap for a GPU build if needed
-torch --index-url https://download.pytorch.org/whl/cpu
+# Embedding model (FastEmbed - lighter/faster than torch)
+fastembed
 
 # Runtime validation and local test execution
 pytest
