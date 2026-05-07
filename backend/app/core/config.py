@@ -17,13 +17,19 @@ class Settings(BaseSettings):
     API_V1_STR: str = "/api/v1"
 
     # Filesystem base directory for persisted Chroma collections.
-    CHROMA_BASE_DIR: str = "./chroma_polyglot_storage"
+    CHROMA_BASE_DIR: str = Field(
+        default="./chroma_polyglot_storage",
+        validation_alias="CHROMA_DIR",
+    )
 
     # Base directory where repositories are cloned locally.
     REPO_BASE_DIR: str = "./repo"
 
     # Embedding model identifier for vectorstore operations.
-    EMBEDDING_MODEL_NAME: str = "BAAI/bge-base-en-v1.5"
+    EMBEDDING_MODEL_NAME: str = Field(
+        default="BAAI/bge-base-en-v1.5",
+        validation_alias="MODEL_NAME",
+    )
 
     # Hostname or IP address for the FastAPI server.
     HOST: str = "0.0.0.0"
@@ -47,6 +53,7 @@ class Settings(BaseSettings):
         env_file=".env",
         env_file_encoding="utf-8",
         case_sensitive=False,
+        extra="ignore",
     )
 
 
