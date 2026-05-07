@@ -16,6 +16,7 @@ bcrypt
 sqlalchemy[asyncio]>=2.0,<3.0
 alembic>=1.13,<2.0
 asyncpg>=0.29,<1.0
+aiosqlite>=0.19,<1.0   # async driver for SQLite (ingestion job tracking)
 
 # Background jobs
 celery
@@ -42,3 +43,6 @@ fastembed
 # Runtime validation and local test execution
 pytest
 httpx
+
+# LLM providers (OpenAI-compatible: OpenAI, Azure, Ollama)
+openai>=1.0,<2.0   # pip install openai

@@ -1,13 +1,51 @@
+# Python
 __pycache__/
 *.py[cod]
+*.pyo
+*.pyd
+*.egg
+*.egg-info/
+.eggs/
+dist/
+build/
+*.so
+*.dylib
+
+# Virtual environments
+.venv/
+venv/
+env/
+ENV/
+
+# Testing
 .pytest_cache/
 .mypy_cache/
 .ruff_cache/
+htmlcov/
+.coverage
+coverage.xml
+
+# Local secrets — never copy into image
 .env
-.venv/
-venv/
+.env.*
+!.env.example
+
+# Data dirs (persisted as Docker volumes)
 repo/
 chroma_polyglot_storage/
 logs/
-*.log
-Dockerfile
+auto_tests/
+
+# Alembic generated files we don't need in image
+alembic/versions/*.pyc
+
+# Editor
+.idea/
+.vscode/
+*.swp
+*.swo
+.DS_Store
+
+# Git
+.git/
+.gitignore

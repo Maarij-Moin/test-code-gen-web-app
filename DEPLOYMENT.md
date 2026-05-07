@@ -1,207 +1,187 @@
-# Autonomous AI Testing Platform Deployment
+# Autonomous AI Testing Platform — Deployment Guide
 
-This repository includes a production-oriented Docker setup for:
+## Architecture overview
 
-- `backend`: FastAPI API on port `8000`
-- `frontend`: React static app served by nginx on port `80`
-- `postgres`: PostgreSQL 16 with persistent data
-- `redis`: Redis 7 for Celery broker/results
-- `chromadb`: Chroma server with persistent data
-- `celery_worker`: Celery worker using the backend image
+```
+Browser
+  │
+  ▼
+┌──────────────────────────────────────────┐
+│  nginx (frontend:80 / host:8080)         │
+│  • Serves React SPA (static assets)      │
+│  • Proxy /api/* → backend:8000/          │
+│  • Proxy /webhooks/* → backend:8000/…    │
+│  • WebSocket /ws → backend:8000/ws       │
+└──────────────────────────────────────────┘
+  │                    │
+  ▼                    ▼
+FastAPI (backend:8000)     Celery Workers
+  │  ─────────────── ──────── ─────────────
+  ├─ PostgreSQL (postgres:5432)
+  ├─ Redis       (redis:6379)
+  └─ ChromaDB    (chromadb:8000 / host:8001)
 
-## Docker Compose
-
-1. Create your environment file:
-
-   ```bash
-   cp .env.example .env
-   ```
-
-2. Edit `.env` and replace at minimum:
-
-   ```bash
-   JWT_SECRET_KEY=...
-   API_KEY=...
-   POSTGRES_PASSWORD=...
-   ```
-
-3. Build and start:
-
-   ```bash
-   docker compose --env-file .env up -d --build
-   ```
-
-4. Open the app:
-
-   ```text
-   http://localhost:8080
-   ```
-
-5. Useful commands:
-
-   ```bash
-   make ps
-   make logs
-   make health
-   make down
-   ```
-
-The frontend calls `/api/*` on nginx. Nginx forwards those requests to `backend:8000` and injects `X-API-Key` for protected test-generation endpoints.
-
-## Health Checks
-
-The compose stack waits for dependency health before starting dependent services:
-
-- Backend: `GET /health`
-- Frontend: `GET /health`
-- PostgreSQL: `pg_isready`
-- Redis: `redis-cli ping`
-- ChromaDB: `/api/v2/heartbeat`
-- Celery: `celery inspect ping`
-
-## Persistent Volumes
-
-Named volumes are used for durable state:
-
-- `postgres_data`: PostgreSQL data
-- `redis_data`: Redis append-only data
-- `repo_data`: cloned repositories
-- `chroma_data`: embedded Chroma vectorstore data used by the backend
-- `chroma_server_data`: Chroma server persistence
-- `backend_logs`: backend logs
-
-## AWS EC2 Deployment
-
-1. Launch an Ubuntu 22.04 or 24.04 EC2 instance.
-
-2. Security group:
-
-   - Allow inbound `22` from your IP
-   - Allow inbound `80` or `8080` from trusted users
-   - Do not expose PostgreSQL, Redis, or ChromaDB publicly unless you have a strict reason
-
-3. Install Docker:
-
-   ```bash
-   sudo apt-get update
-   sudo apt-get install -y ca-certificates curl git make
-   sudo install -m 0755 -d /etc/apt/keyrings
-   curl -fsSL https://download.docker.com/linux/ubuntu/gpg | sudo gpg --dearmor -o /etc/apt/keyrings/docker.gpg
-   echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/ubuntu $(. /etc/os-release && echo "$VERSION_CODENAME") stable" | sudo tee /etc/apt/sources.list.d/docker.list
-   sudo apt-get update
-   sudo apt-get install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
-   sudo usermod -aG docker ubuntu
-   ```
-
-4. Reconnect SSH, then deploy:
-
-   ```bash
-   git clone <your-repo-url>
-   cd automated-web-app
-   cp .env.example .env
-   nano .env
-   make up
-   ```
-
-5. Optional production edge:
-
-   - Put an AWS Application Load Balancer or Caddy/Traefik in front for TLS.
-   - Set `FRONTEND_PORT=80` in `.env` if nginx should bind directly to port 80.
-   - Set `ALLOWED_ORIGINS` to your real domain.
-
-## AWS ECS Deployment
-
-Recommended ECS shape:
-
-- Push `backend` and `frontend` images to Amazon ECR.
-- Use Amazon RDS PostgreSQL instead of the compose PostgreSQL container.
-- Use Amazon ElastiCache Redis instead of the compose Redis container.
-- Use EFS volumes for `/app/repo` and `/app/chroma_polyglot_storage` if running multiple backend/worker tasks.
-- Put the frontend service behind an Application Load Balancer.
-- Keep backend and worker services private in the VPC.
-
-High-level steps:
-
-1. Create ECR repositories:
-
-   ```bash
-   aws ecr create-repository --repository-name autonomous-ai-testing-backend
-   aws ecr create-repository --repository-name autonomous-ai-testing-frontend
-   ```
-
-2. Configure `.env`:
-
-   ```bash
-   AWS_ACCOUNT_ID=<account-id>
-   AWS_REGION=us-east-1
-   IMAGE_TAG=prod
-   ECR_BACKEND_REPOSITORY=autonomous-ai-testing-backend
-   ECR_FRONTEND_REPOSITORY=autonomous-ai-testing-frontend
-   ```
-
-3. Build and push:
-
-   ```bash
-   make push
-   ```
-
-4. Create ECS services:
-
-   - Frontend task: image `frontend`, port `80`, ALB target group health path `/health`.
-   - Backend task: image `backend`, port `8000`, health path `/health`.
-   - Worker task: image `backend`, command:
-
-     ```text
-     celery -A app.workers.celery_app.celery_app worker --loglevel=info --concurrency=2
-     ```
-
-5. Set ECS environment variables:
-
-   ```text
-   DATABASE_URL=postgresql+asyncpg://USER:PASSWORD@RDS_ENDPOINT:5432/ai_test_db
-   REDIS_URL=redis://ELASTICACHE_ENDPOINT:6379/0
-   CELERY_BROKER_URL=redis://ELASTICACHE_ENDPOINT:6379/0
-   CELERY_RESULT_BACKEND=redis://ELASTICACHE_ENDPOINT:6379/0
-   CHROMA_DIR=/app/chroma_polyglot_storage
-   REPO_BASE_DIR=/app/repo
-   JWT_SECRET_KEY=<secret>
-   API_KEY=<secret>
-   ALLOWED_ORIGINS=["https://your-domain.com"]
-   ```
-
-6. Store secrets in AWS Secrets Manager or SSM Parameter Store, then reference them from ECS task definitions.
-
-## Startup Commands
-
-FastAPI:
-
-```bash
-uvicorn app.main:app --host 0.0.0.0 --port 8000 --proxy-headers
+Celery Beat  → periodic maintenance tasks
+Flower       → Celery monitoring UI (host:5555/flower)
 ```
 
-Celery:
+## Quick start (development)
 
 ```bash
-celery -A app.workers.celery_app.celery_app worker --loglevel=info --concurrency=2
+# 1. Create environment file
+cp .env.example .env
+# Edit .env — at minimum set JWT_SECRET_KEY and API_KEY
+
+# 2. Start the stack (auto-merges docker-compose.override.yml)
+make up
+
+# 3. Run database migrations
+make migrate
+
+# Open in browser
+#   Frontend  → http://localhost:8080
+#   API docs  → http://localhost:8000/docs
+#   Flower    → http://localhost:5555/flower
 ```
 
-React frontend:
+## Production deployment
 
 ```bash
-pnpm run build
-nginx -g "daemon off;"
+# Skip the dev override file
+make up-prod
+
+# Or manually:
+docker compose --file docker-compose.yml up -d --build
 ```
 
-Local development frontend:
+## Services
+
+| Service | Image | Host port | Purpose |
+|---|---|---|---|
+| `frontend` | `nginx:1.27-alpine` | 8080 | React SPA + API proxy |
+| `backend` | custom (Python 3.11) | 8000 | FastAPI + REST + WS |
+| `celery_worker` | same as backend | — | Async job queue |
+| `celery_beat` | same as backend | — | Periodic scheduler |
+| `flower` | same as backend | 5555 | Celery monitoring |
+| `postgres` | `postgres:16-alpine` | 5432 | Relational DB |
+| `redis` | `redis:7-alpine` | 6379 | Broker + cache |
+| `chromadb` | `ghcr.io/chroma-core/chroma:0.5.23` | 8001 | Vector DB |
+
+## Environment variables
+
+See `.env.example` for a fully annotated list. Critical ones:
+
+| Variable | Description |
+|---|---|
+| `JWT_SECRET_KEY` | `openssl rand -hex 32` |
+| `API_KEY` | `openssl rand -hex 32` |
+| `GITHUB_WEBHOOK_SECRET` | Must match GitHub webhook config |
+| `LLM_PROVIDER` | `mock` / `openai` / `azure` / `ollama` |
+| `OPENAI_API_KEY` | Required when `LLM_PROVIDER=openai` or `azure` |
+
+## LLM configuration
+
+### OpenAI
+```env
+LLM_PROVIDER=openai
+OPENAI_API_KEY=sk-...
+OPENAI_MODEL=gpt-4o-mini
+```
+
+### Azure OpenAI
+```env
+LLM_PROVIDER=azure
+OPENAI_API_KEY=<your-azure-key>
+OPENAI_BASE_URL=https://<resource>.openai.azure.com
+AZURE_API_VERSION=2024-05-01-preview
+OPENAI_MODEL=gpt-4o
+```
+
+### Local Ollama
+```env
+LLM_PROVIDER=ollama
+OPENAI_BASE_URL=http://host.docker.internal:11434/v1
+OPENAI_MODEL=llama3
+```
+
+### Mock (CI / no API key)
+```env
+LLM_PROVIDER=mock
+```
+
+## GitHub Webhook setup
+
+1. Go to your repository → **Settings → Webhooks → Add webhook**
+2. Payload URL: `https://<your-domain>/webhooks/github`
+3. Content type: `application/json`
+4. Secret: same value as `GITHUB_WEBHOOK_SECRET` in `.env`
+5. Events: ☑ Pushes, ☑ Pull requests
+6. Verify health: `GET /webhooks/health`
+
+## Volume management
+
+| Volume | Stores |
+|---|---|
+| `ai-test-postgres-data` | All relational data (jobs, users, events) |
+| `ai-test-redis-data` | Celery task queue + AOF log |
+| `ai-test-chroma-server-data` | ChromaDB vector store (server mode) |
+| `ai-test-chroma-embed-data` | ChromaDB embedded mode cache |
+| `ai-test-repo-data` | Cloned Git repositories |
+| `ai-test-auto-tests` | LLM-generated test files |
+| `ai-test-backend-logs` | Application logs |
+
+## Makefile targets
+
+```
+make env           Create .env from .env.example
+make up            Start dev stack (hot-reload)
+make up-prod       Start production stack
+make down          Stop all containers
+make restart       down + up
+make logs          Follow all logs
+make logs-backend  Follow backend logs only
+make migrate       Run Alembic migrations
+make test          pytest in backend container
+make lint          ruff + tsc
+make health        Container health table
+make clean         Remove containers
+make clean-all     Remove containers + volumes (DESTRUCTIVE)
+make push          Build + push images to AWS ECR
+```
+
+## Health checks
+
+All containers expose health checks to Docker:
+
+| Container | Endpoint / command |
+|---|---|
+| backend | `GET /health` |
+| frontend | `GET /health` (nginx stub) |
+| celery_worker | `celery inspect ping` |
+| postgres | `pg_isready` |
+| redis | `redis-cli ping` |
+| chromadb | `/api/v2/heartbeat` |
+
+## Security notes
+
+- JWT tokens expire after `JWT_EXPIRE_MINUTES` (default 60 min)
+- GitHub webhooks use HMAC-SHA256 constant-time signature verification
+- Replay protection via `X-GitHub-Delivery` uniqueness constraint
+- nginx forwards `X-API-Key` header on all `/api/*` requests
+- All containers run as non-root users
+- The internal `app_network` bridge (172.20.0.0/16) isolates services
+- No service other than `backend` is reachable from `celery_worker` or `celery_beat`
+
+## Scaling workers
 
 ```bash
-cd frontend
-pnpm install
-pnpm run dev
+# Run 4 Celery worker replicas
+docker compose --env-file .env up -d --scale celery_worker=4
 ```
 
-## Notes
+## AWS ECR push
 
-- The backend currently uses embedded Chroma persistence through `CHROMA_DIR`. The `chromadb` service is included for future HTTP-client usage and operational parity, while the backend volume remains the active vectorstore persistence path.
-- Do not expose Redis, PostgreSQL, or ChromaDB directly to the public internet in production.
-- Rotate `JWT_SECRET_KEY`, `API_KEY`, and database credentials before any real deployment.
+```bash
+# Fill AWS_ACCOUNT_ID, AWS_REGION, ECR_*_REPOSITORY in .env
+make push
+```

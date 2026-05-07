@@ -11,6 +11,8 @@ import { Login } from "@/pages/Login";
 import { PullRequestMonitor } from "@/pages/PullRequestMonitor";
 import { Register } from "@/pages/Register";
 import { RepositoryDetails } from "@/pages/RepositoryDetails";
+import { RepoActivity } from "@/pages/RepoActivity";
+import { Settings } from "@/pages/Settings";
 import { useUiStore } from "@/stores/uiStore";
 
 export default function App() {
@@ -33,6 +35,8 @@ export default function App() {
           <Route path="/jobs" element={<JobMonitoring />} />
           <Route path="/tests" element={<GeneratedTestsViewer />} />
           <Route path="/pull-requests" element={<PullRequestMonitor />} />
+          <Route path="/activity" element={<RepoActivity />} />
+          <Route path="/settings" element={<Settings />} />
         </Route>
       </Route>
       <Route path="*" element={<Navigate to="/" replace />} />

@@ -1,23 +1,42 @@
 import { FormEvent, useState } from "react";
 import { Link } from "react-router-dom";
-import { Activity, Boxes, GitBranch, GitPullRequest, Plus, TestTube2 } from "lucide-react";
+import {
+  Activity,
+  ArrowRight,
+  Bot,
+  CheckCircle2,
+  Clock,
+  GitBranch,
+  GitPullRequest,
+  Link2,
+  Plus,
+  RefreshCw,
+  TestTube2,
+  Webhook,
+  XCircle,
+  Zap,
+} from "lucide-react";
 
-import { MetricCard } from "@/components/dashboard/MetricCard";
 import { Button } from "@/components/ui/Button";
 import { Card, CardContent, CardHeader } from "@/components/ui/Card";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { Input } from "@/components/ui/Input";
 import { StatusPill } from "@/components/ui/StatusPill";
+import { MetricCard } from "@/components/dashboard/MetricCard";
 import { useJobs } from "@/hooks/useJobs";
 import { usePullRequests } from "@/hooks/usePullRequests";
 import { useConnectRepository, useRepositories } from "@/hooks/useRepositories";
+import { useWebhookHealth } from "@/hooks/useWebhook";
+import { useAuthStore } from "@/stores/authStore";
 import { getApiErrorMessage } from "@/lib/apiClient";
 import { formatDateTime } from "@/utils/format";
 
 export function Dashboard() {
+  const user = useAuthStore((s) => s.user);
   const repositories = useRepositories();
   const jobs = useJobs();
   const pullRequests = usePullRequests();
+  const webhookHealth = useWebhookHealth();
   const connectRepository = useConnectRepository();
   const [repoUrl, setRepoUrl] = useState("");
 
@@ -28,62 +47,184 @@ export function Dashboard() {
   }
 
   const repoCount = repositories.data?.length ?? 0;
-  const runningJobs = jobs.data?.filter((job) => job.status === "running").length ?? 0;
-  const generatedJobs = jobs.data?.filter((job) => job.type === "generate").length ?? 0;
-  const activePrs = pullRequests.data?.filter((pr) => pr.status === "open" || pr.status === "draft").length ?? 0;
+  const runningJobs = jobs.data?.filter((j) => j.status === "running").length ?? 0;
+  const generatedTests = jobs.data?.filter((j) => j.type === "generate").length ?? 0;
+  const activePrs = pullRequests.data?.filter((p) => p.status === "open" || p.status === "draft").length ?? 0;
+  const isWebhookOk = webhookHealth.data?.status === "ok" && webhookHealth.data?.secret_configured;
+
+  const greeting = () => {
+    const h = new Date().getHours();
+    if (h < 12) return "Good morning";
+    if (h < 17) return "Good afternoon";
+    return "Good evening";
+  };
 
   return (
-    <main className="space-y-6 px-4 py-6 md:px-8">
-      <div className="flex flex-col justify-between gap-4 md:flex-row md:items-end">
+    <main className="space-y-8 px-4 py-6 md:px-8">
+      {/* Hero greeting */}
+      <div className="flex flex-col justify-between gap-4 md:flex-row md:items-center">
         <div>
-          <h1 className="text-3xl font-bold tracking-normal text-text">Dashboard</h1>
-          <p className="mt-2 text-sm text-muted">Connect repositories and supervise autonomous testing workflows.</p>
+          <div className="flex items-center gap-2">
+            <Bot size={20} className="text-brand" />
+            <span className="text-sm font-medium text-muted">Autonomous QA Platform</span>
+          </div>
+          <h1 className="mt-1 text-3xl font-bold tracking-tight text-text">
+            {greeting()}, {user?.full_name?.split(" ")[0] ?? "Engineer"} 👋
+          </h1>
+          <p className="mt-1 text-sm text-muted">
+            Connect repositories and monitor autonomous testing workflows.
+          </p>
+        </div>
+        {/* Webhook health badge */}
+        <div
+          className={`flex items-center gap-2 rounded-xl border px-4 py-2 text-sm font-medium ${
+            isWebhookOk
+              ? "border-success/30 bg-success/10 text-success"
+              : "border-warning/30 bg-warning/10 text-warning"
+          }`}
+        >
+          <Webhook size={14} />
+          {isWebhookOk ? "Webhook connected" : "Webhook unconfigured"}
         </div>
       </div>
 
-      <section className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
-        <MetricCard label="Repositories" value={repoCount} helper="Connected in this workspace" icon={<GitBranch size={20} />} />
-        <MetricCard label="Running jobs" value={runningJobs} helper="Live generation or validation" icon={<Activity size={20} />} />
-        <MetricCard label="Generated suites" value={generatedJobs} helper="Recent generation jobs" icon={<TestTube2 size={20} />} />
-        <MetricCard label="Active PRs" value={activePrs} helper="Open or draft monitored PRs" icon={<GitPullRequest size={20} />} />
+      {/* Metric cards */}
+      <section className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+        <MetricCard
+          label="Repositories"
+          value={repoCount}
+          helper="Connected in this workspace"
+          icon={<GitBranch size={18} />}
+        />
+        <MetricCard
+          label="Running jobs"
+          value={runningJobs}
+          helper="Live generation or validation"
+          icon={<Activity size={18} />}
+          highlight={runningJobs > 0}
+        />
+        <MetricCard
+          label="Generated suites"
+          value={generatedTests}
+          helper="Tests generated by AI"
+          icon={<TestTube2 size={18} />}
+        />
+        <MetricCard
+          label="Active PRs"
+          value={activePrs}
+          helper="Open or draft monitored PRs"
+          icon={<GitPullRequest size={18} />}
+        />
       </section>
 
+      {/* Connect + Repo list */}
       <section className="grid gap-6 xl:grid-cols-[0.9fr_1.1fr]">
+        {/* Connect form */}
         <Card>
           <CardHeader>
-            <h2 className="text-lg font-semibold text-text">Repository connection</h2>
-            <p className="mt-1 text-sm text-muted">Clone and index a Git repository through the backend pipeline.</p>
+            <div className="flex items-center gap-2">
+              <Link2 size={16} className="text-brand" />
+              <div>
+                <h2 className="text-base font-semibold text-text">Connect a repository</h2>
+                <p className="text-xs text-muted">Clone and embed a Git repo into the pipeline.</p>
+              </div>
+            </div>
           </CardHeader>
           <CardContent>
             <form className="space-y-4" onSubmit={handleConnect}>
-              <Input label="Git repository URL" type="url" placeholder="https://github.com/org/project.git" value={repoUrl} onChange={(event) => setRepoUrl(event.target.value)} required />
-              {connectRepository.isError ? <p className="rounded-md bg-danger/10 p-3 text-sm text-danger">{getApiErrorMessage(connectRepository.error, "Repository connection failed")}</p> : null}
-              <Button type="submit" disabled={connectRepository.isPending}>
-                <Plus size={16} />
-                {connectRepository.isPending ? "Connecting..." : "Connect repository"}
+              <Input
+                id="repo-url-input"
+                label="Git repository URL"
+                type="url"
+                placeholder="https://github.com/org/repo.git"
+                value={repoUrl}
+                onChange={(e) => setRepoUrl(e.target.value)}
+                required
+              />
+              {connectRepository.isError && (
+                <div className="rounded-lg border border-danger/30 bg-danger/10 px-3 py-2 text-sm text-danger">
+                  {getApiErrorMessage(connectRepository.error, "Repository connection failed")}
+                </div>
+              )}
+              {connectRepository.isSuccess && (
+                <div className="rounded-lg border border-success/30 bg-success/10 px-3 py-2 text-sm text-success">
+                  Repository connected and indexing started.
+                </div>
+              )}
+              <Button id="connect-repo-btn" type="submit" disabled={connectRepository.isPending} className="w-full">
+                {connectRepository.isPending ? (
+                  <RefreshCw size={15} className="animate-spin" />
+                ) : (
+                  <Plus size={15} />
+                )}
+                {connectRepository.isPending ? "Connecting…" : "Connect repository"}
               </Button>
             </form>
+
+            {/* Pipeline steps diagram */}
+            <div className="mt-6 rounded-xl bg-panel2 p-4">
+              <p className="mb-3 text-xs font-semibold uppercase tracking-wider text-muted">
+                Pipeline
+              </p>
+              <div className="flex items-center gap-2 overflow-x-auto pb-1">
+                {["Clone", "Index", "Diff", "Generate", "Validate", "PR"].map((step, i) => (
+                  <div key={step} className="flex items-center gap-2">
+                    <div className="flex flex-col items-center gap-1">
+                      <div className="flex h-7 w-7 items-center justify-center rounded-full bg-brand/20 text-xs font-bold text-brand">
+                        {i + 1}
+                      </div>
+                      <span className="text-[10px] text-muted">{step}</span>
+                    </div>
+                    {i < 5 && <ArrowRight size={12} className="shrink-0 text-muted" />}
+                  </div>
+                ))}
+              </div>
+            </div>
           </CardContent>
         </Card>
 
+        {/* Repo list */}
         <Card>
-          <CardHeader>
-            <h2 className="text-lg font-semibold text-text">Connected repositories</h2>
+          <CardHeader className="flex items-center justify-between">
+            <h2 className="text-base font-semibold text-text">
+              Repositories ({repoCount})
+            </h2>
+            {repoCount > 0 && (
+              <Link
+                to="/"
+                className="flex items-center gap-1 text-xs text-brand hover:underline"
+              >
+                View all <ArrowRight size={12} />
+              </Link>
+            )}
           </CardHeader>
-          <CardContent>
+          <CardContent className="p-0">
             {repoCount === 0 ? (
-              <EmptyState icon={<Boxes size={28} />} title="No repositories connected" description="Connect a repository to generate tests from code diffs and monitor its automation jobs." />
+              <div className="p-6">
+                <EmptyState
+                  icon={<GitBranch size={26} />}
+                  title="No repositories"
+                  description="Connect your first repository to begin generating tests."
+                />
+              </div>
             ) : (
               <div className="divide-y divide-border">
-                {repositories.data?.map((repository) => (
-                  <Link key={repository.repo_id} to={`/repositories/${repository.repo_id}`} className="flex flex-col gap-3 py-4 transition hover:bg-panel2/60 md:flex-row md:items-center md:justify-between">
-                    <div className="min-w-0 px-2">
-                      <p className="truncate font-semibold text-text">{repository.name}</p>
-                      <p className="truncate text-sm text-muted">{repository.repo_url}</p>
+                {repositories.data?.map((repo) => (
+                  <Link
+                    key={repo.repo_id}
+                    to={`/repositories/${repo.repo_id}`}
+                    className="flex items-center justify-between px-5 py-3.5 transition hover:bg-panel2"
+                  >
+                    <div className="min-w-0">
+                      <p className="truncate font-semibold text-text">{repo.name}</p>
+                      <p className="truncate text-xs text-muted">{repo.repo_url}</p>
                     </div>
-                    <div className="flex items-center gap-3 px-2">
-                      <StatusPill status={repository.status} />
-                      <span className="text-xs text-muted">{formatDateTime(repository.last_indexed_at)}</span>
+                    <div className="ml-4 flex shrink-0 items-center gap-3">
+                      <StatusPill status={repo.status} />
+                      <span className="hidden text-xs text-muted md:block">
+                        {formatDateTime(repo.last_indexed_at)}
+                      </span>
+                      <ArrowRight size={14} className="text-muted" />
                     </div>
                   </Link>
                 ))}
@@ -91,6 +232,64 @@ export function Dashboard() {
             )}
           </CardContent>
         </Card>
+      </section>
+
+      {/* Recent jobs */}
+      <section>
+        <div className="mb-4 flex items-center justify-between">
+          <h2 className="text-base font-semibold text-text">Recent Jobs</h2>
+          <Link to="/jobs" className="flex items-center gap-1 text-xs text-brand hover:underline">
+            All jobs <ArrowRight size={12} />
+          </Link>
+        </div>
+        <div className="grid gap-3">
+          {(jobs.data ?? []).slice(0, 4).map((job) => (
+            <div
+              key={job.id}
+              className="flex items-center justify-between rounded-xl border border-border bg-panel px-4 py-3"
+            >
+              <div className="flex items-center gap-3">
+                {job.status === "succeeded" ? (
+                  <CheckCircle2 size={16} className="text-success" />
+                ) : job.status === "failed" ? (
+                  <XCircle size={16} className="text-danger" />
+                ) : job.status === "running" ? (
+                  <Zap size={16} className="animate-pulse text-brand" />
+                ) : (
+                  <Clock size={16} className="text-muted" />
+                )}
+                <div>
+                  <p className="text-sm font-semibold text-text">{job.repo_name}</p>
+                  <p className="text-xs text-muted capitalize">{job.type} job</p>
+                </div>
+              </div>
+              <div className="flex items-center gap-3">
+                <div className="hidden w-24 md:block">
+                  <div className="h-1.5 overflow-hidden rounded-full bg-panel2">
+                    <div
+                      className={`h-full rounded-full transition-all ${
+                        job.status === "succeeded"
+                          ? "bg-success"
+                          : job.status === "failed"
+                            ? "bg-danger"
+                            : "bg-brand"
+                      }`}
+                      style={{ width: `${job.progress}%` }}
+                    />
+                  </div>
+                </div>
+                <StatusPill status={job.status} />
+              </div>
+            </div>
+          ))}
+          {!jobs.data?.length && (
+            <EmptyState
+              icon={<Activity size={26} />}
+              title="No jobs yet"
+              description="Jobs appear here as soon as you trigger generation or a webhook fires."
+            />
+          )}
+        </div>
       </section>
     </main>
   );

@@ -1,8 +1,28 @@
+# Node
 node_modules/
-dist/
 .pnpm-store/
+npm-debug.log*
+pnpm-debug.log*
+
+# Build output
+dist/
+build/
+
+# Local secrets
 .env
-.env.local
-.env.*.local
-*.log
-Dockerfile
+.env.*
+!.env.example
+
+# Editor
+.idea/
+.vscode/
+*.swp
+*.swo
+.DS_Store
+
+# Git
+.git/
+.gitignore
+
+# Docker
+Dockerfile.dev

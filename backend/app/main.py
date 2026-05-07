@@ -10,9 +10,10 @@ from sqlalchemy.exc import OperationalError
 from app.core.logging_config import setup_logging
 from app.core.config import settings
 from app.routes.auth_routes import router as auth_router
+from app.routes.job_routes import router as job_router
+from app.routes.webhook_routes import router as webhook_router      # production: push + PR + replay protection
 from app.api.routes.repo_routes import router as repo_router
 from app.api.routes.test_routes import router as test_router
-from app.api.routes.webhook_routes import router as webhook_router
 from app.db.database import init_auth_db
 
 # ---------------------------------------------------------------------------
@@ -29,6 +30,13 @@ logger = logging.getLogger(__name__)
 async def lifespan(app: FastAPI):
     logger.info("Automated Test-Generation API starting up …")
     await init_auth_db()
+    # Ensure the ingestion_jobs table exists (uses the same SQLite AuthBase).
+    # No Alembic migration is needed — create_all is idempotent.
+    from app.models.job_model import IngestionJob  # noqa: F401  (side-effect import)
+    from app.models.user_model import AuthBase
+    from app.db.database import engine
+    async with engine.begin() as conn:
+        await conn.run_sync(AuthBase.metadata.create_all)
     yield
     logger.info("Automated Test-Generation API shutting down …")
 
@@ -104,9 +112,10 @@ async def database_exception_handler(request: Request, exc: OperationalError) ->
 # Routers
 # ---------------------------------------------------------------------------
 app.include_router(auth_router)
+app.include_router(job_router)      # GET/POST /jobs/*
+app.include_router(webhook_router)  # POST /webhooks/github  GET /webhooks/health
 app.include_router(repo_router)
 app.include_router(test_router)
-app.include_router(webhook_router)
 
 
 # ---------------------------------------------------------------------------

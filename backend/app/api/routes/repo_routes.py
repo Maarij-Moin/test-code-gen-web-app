@@ -1,9 +1,17 @@
-"""Repository API routes (migrated from app.routes)."""
+"""Repository API routes — synchronous operations + async clone-and-index.
+
+The ``/clone-and-index`` endpoint has been upgraded to a **non-blocking** async
+job dispatcher.  It returns HTTP 202 with a ``job_id`` immediately; the actual
+clone + index pipeline runs in a FastAPI BackgroundTask.
+
+All other endpoints (upload, index, diff-pipeline, update, query, repo-id)
+remain synchronous and unchanged.
+"""
 
 import logging
 
-from fastapi import APIRouter, HTTPException, Query
-from pydantic import BaseModel
+from fastapi import APIRouter, BackgroundTasks, HTTPException, Query
+from pydantic import BaseModel, Field
 
 from app.services.repo_service import clone_repo
 from app.services.embedding_service import (
@@ -14,11 +22,17 @@ from app.services.embedding_service import (
     update_vectorstore,
     retrieve_related_chunks,
 )
+from app.services.job_service import create_job
+from app.services.repo_worker import run_ingestion_pipeline
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/repos", tags=["repos"])
 
+
+# ---------------------------------------------------------------------------
+# Request bodies
+# ---------------------------------------------------------------------------
 
 class CloneRequest(BaseModel):
     repo_url: str
@@ -29,7 +43,14 @@ class IndexRequest(BaseModel):
 
 
 class CloneAndIndexRequest(BaseModel):
-    repo_url: str
+    """Payload for the async clone-and-index endpoint."""
+
+    repo_url: str = Field(
+        ...,
+        min_length=5,
+        description="Git repository URL to clone and index asynchronously.",
+        examples=["https://github.com/org/project.git"],
+    )
 
 
 class DiffPipelineRequest(BaseModel):
@@ -50,6 +71,10 @@ class QueryRequest(BaseModel):
     language: str | None = None
 
 
+# ---------------------------------------------------------------------------
+# Error helper
+# ---------------------------------------------------------------------------
+
 def _http_error(exc: Exception, endpoint: str) -> HTTPException:
     detail = str(exc)
     if isinstance(exc, (ValueError, TypeError)):
@@ -65,7 +90,11 @@ def _http_error(exc: Exception, endpoint: str) -> HTTPException:
     return HTTPException(status_code=500, detail=detail)
 
 
-@router.post("/upload", summary="Clone a remote Git repository locally")
+# ---------------------------------------------------------------------------
+# Endpoints
+# ---------------------------------------------------------------------------
+
+@router.post("/upload", summary="Clone a remote Git repository locally (synchronous)")
 def upload_repo(body: CloneRequest):
     logger.info("[upload_repo] Cloning repo_url='%s'", body.repo_url)
     try:
@@ -76,7 +105,7 @@ def upload_repo(body: CloneRequest):
     return {"message": f"Repository cloned to {path}", "repo_path": path}
 
 
-@router.post("/index", summary="Embed and store a local codebase in ChromaDB")
+@router.post("/index", summary="Embed and store a local codebase in ChromaDB (synchronous)")
 def index_repo(body: IndexRequest):
     logger.info("[index_repo] Indexing repo_path='%s'", body.repo_path)
     try:
@@ -91,21 +120,58 @@ def index_repo(body: IndexRequest):
     }
 
 
-@router.post("/clone-and-index", summary="Clone a remote repo then immediately index it")
-def clone_and_index(body: CloneAndIndexRequest):
-    logger.info("[clone_and_index] repo_url='%s'", body.repo_url)
-    try:
-        repo_path = clone_repo(body.repo_url)
-        _, repo_id = process_and_store_codebase(repo_path)
-    except Exception as exc:
-        raise _http_error(exc, "clone_and_index")
+@router.post(
+    "/clone-and-index",
+    status_code=202,
+    summary="Async clone-and-index — returns job_id immediately",
+    responses={
+        202: {
+            "description": (
+                "Job accepted. Poll ``GET /jobs/{job_id}`` to follow progress. "
+                "Terminal statuses: COMPLETED | FAILED."
+            )
+        },
+        422: {"description": "Invalid repo_url."},
+    },
+)
+async def clone_and_index(
+    body: CloneAndIndexRequest,
+    background_tasks: BackgroundTasks,
+):
+    """Submit a repository URL for **asynchronous** clone + index.
+
+    The API returns **immediately** with HTTP 202 and a ``job_id``.
+    The actual clone → embed → index pipeline runs in the background.
+
+    Use ``GET /jobs/{job_id}`` to poll progress.  Once ``status`` is
+    ``COMPLETED``, the ``vector_repo_id`` field contains the stable ID
+    for semantic search queries.
+
+    **Status lifecycle:**
+    ```
+    PENDING → CLONING → INDEXING → COMPLETED
+                                 ↘ FAILED
+    ```
+    """
+    logger.info("[clone_and_index] Async job submitted for repo_url='%s'", body.repo_url)
+
+    # 1. Persist a PENDING job row — instantaneous.
+    job = await create_job(body.repo_url)
+
+    # 2. Schedule the pipeline; control returns to the caller immediately.
+    background_tasks.add_task(run_ingestion_pipeline, job.id, body.repo_url)
+
     logger.info(
-        "[clone_and_index] Success — repo_path='%s'  repo_id='%s'", repo_path, repo_id
+        "[clone_and_index] Job %s queued for repo_url='%s'", job.id, body.repo_url
     )
     return {
-        "message": "Repository cloned and indexed successfully.",
-        "repo_path": repo_path,
-        "repo_id": repo_id,
+        "job_id": str(job.id),
+        "status": "PENDING",
+        "message": (
+            f"Ingestion job accepted. "
+            f"Poll GET /jobs/{job.id} for live status updates."
+        ),
+        "poll_url": f"/jobs/{job.id}",
     }
 
 
