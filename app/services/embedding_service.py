@@ -23,4 +23,8 @@ __all__ = [
     "retrieve_related_chunks",
     "generate_test_prompt_from_diff",
     "run_diff_pipeline",
+    "_chunk_by_units",
+    "_extract_python_units",
+    "_split_by_declarations",
+    "_sub_chunk",
 ]
