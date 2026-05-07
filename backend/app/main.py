@@ -6,16 +6,13 @@ from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
+from app.core.logging_config import setup_logging
 from app.routes.repo_routes import router as repo_router
 
 # ---------------------------------------------------------------------------
-# Logging — structured, module-named loggers propagate here
+# Logging — centralized config (console + rotating file handlers)
 # ---------------------------------------------------------------------------
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s  %(levelname)-8s  %(name)s — %(message)s",
-    datefmt="%Y-%m-%dT%H:%M:%S",
-)
+setup_logging()
 logger = logging.getLogger(__name__)
 
 
