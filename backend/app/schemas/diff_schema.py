@@ -12,7 +12,7 @@ class DiffPipelineRequest(BaseModel):
     repo_id: str = Field(..., min_length=1, description="Repository identifier.")
 
     class Config:
-        schema_extra = {
+        json_schema_extra = {
             "example": {
                 "repo_path": "C:/repos/my-project",
                 "repo_id": "repo_7c867f35d4e397a2",
@@ -30,7 +30,7 @@ class DiffHunkResponse(BaseModel):
     prompt: str = Field(..., description="Generated test prompt for the hunk.")
 
     class Config:
-        schema_extra = {
+        json_schema_extra = {
             "example": {
                 "file": "src/math_operations.py",
                 "function_name": "add",
@@ -51,7 +51,7 @@ class DiffPipelineResponse(BaseModel):
     )
 
     class Config:
-        schema_extra = {
+        json_schema_extra = {
             "example": {
                 "success": True,
                 "total_prompts": 1,
@@ -75,7 +75,7 @@ class UpdateVectorstoreRequest(BaseModel):
     repo_id: str = Field(..., min_length=1, description="Repository identifier.")
 
     class Config:
-        schema_extra = {
+        json_schema_extra = {
             "example": {
                 "repo_path": "C:/repos/my-project",
                 "repo_id": "repo_7c867f35d4e397a2",
@@ -90,7 +90,7 @@ class UpdateVectorstoreResponse(BaseModel):
     updated_chunks: int = Field(..., ge=0, description="Number of chunks updated.")
 
     class Config:
-        schema_extra = {
+        json_schema_extra = {
             "example": {
                 "success": True,
                 "updated_chunks": 42,

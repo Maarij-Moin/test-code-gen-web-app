@@ -1,7 +1,13 @@
 __pycache__/
-*.pyc
-.git/
-venv/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
 .env
-chroma_polyglot_storage/
+.venv/
+venv/
 repo/
+chroma_polyglot_storage/
+logs/
+*.log
+Dockerfile

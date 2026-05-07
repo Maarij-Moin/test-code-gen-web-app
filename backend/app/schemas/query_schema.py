@@ -13,7 +13,7 @@ class QueryRequest(BaseModel):
     k: int = Field(5, ge=1, le=50, description="Number of results to return.")
 
     class Config:
-        schema_extra = {
+        json_schema_extra = {
             "example": {
                 "repo_id": "repo_7c867f35d4e397a2",
                 "query": "Where is the diff pipeline implemented?",
@@ -32,7 +32,7 @@ class QueryResult(BaseModel):
     )
 
     class Config:
-        schema_extra = {
+        json_schema_extra = {
             "example": {
                 "content": "def run_diff_pipeline(repo_path: str, ...):",
                 "metadata": {"file_path": "app/services/diff_pipeline_service.py"},
@@ -51,7 +51,7 @@ class QueryResponse(BaseModel):
     )
 
     class Config:
-        schema_extra = {
+        json_schema_extra = {
             "example": {
                 "success": True,
                 "total_results": 2,

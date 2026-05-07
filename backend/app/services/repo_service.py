@@ -66,3 +66,24 @@ def clone_repo(repo_url: str) -> str:
 
     logger.info("Clone complete: '%s'", repo_path)
     return repo_path
+
+
+def pull_repo(repo_path: str) -> None:
+    """Pull the latest changes for an existing local repository.
+
+    Args:
+        repo_path: Absolute or relative path to the repo root.
+
+    Raises:
+        RuntimeError: If the repo is invalid or git pull fails.
+    """
+
+    if not repo_path or not os.path.exists(repo_path):
+        raise RuntimeError(f"Repository path does not exist: '{repo_path}'.")
+
+    try:
+        repo = git.Repo(repo_path)
+        repo.remotes.origin.pull()
+        logger.info("Pulled latest changes for '%s'.", repo_path)
+    except Exception as exc:
+        raise RuntimeError(f"Failed to pull repository '{repo_path}': {exc}") from exc

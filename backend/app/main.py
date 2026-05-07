@@ -5,9 +5,14 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
+from sqlalchemy.exc import OperationalError
 
 from app.core.logging_config import setup_logging
-from app.routes.repo_routes import router as repo_router
+from app.core.config import settings
+from app.api.routes.auth_routes import router as auth_router
+from app.api.routes.repo_routes import router as repo_router
+from app.api.routes.test_routes import router as test_router
+from app.api.routes.webhook_routes import router as webhook_router
 
 # ---------------------------------------------------------------------------
 # Logging — centralized config (console + rotating file handlers)
@@ -48,7 +53,7 @@ app = FastAPI(
 # ---------------------------------------------------------------------------
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=settings.ALLOWED_ORIGINS,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -79,10 +84,27 @@ async def global_exception_handler(request: Request, exc: Exception) -> JSONResp
         },
     )
 
+
+@app.exception_handler(OperationalError)
+async def database_exception_handler(request: Request, exc: OperationalError) -> JSONResponse:
+    logger.error(
+        "Database connection failed on %s %s: %s",
+        request.method,
+        request.url.path,
+        exc,
+    )
+    return JSONResponse(
+        status_code=503,
+        content={"detail": "Database is unavailable. Start PostgreSQL and run migrations."},
+    )
+
 # ---------------------------------------------------------------------------
 # Routers
 # ---------------------------------------------------------------------------
+app.include_router(auth_router)
 app.include_router(repo_router)
+app.include_router(test_router)
+app.include_router(webhook_router)
 
 
 # ---------------------------------------------------------------------------

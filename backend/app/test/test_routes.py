@@ -6,7 +6,7 @@ import logging
 
 from fastapi import APIRouter, HTTPException
 
-from app.core.auth import api_key_dependency
+from app.dependencies.auth import api_key_dependency
 from app.schemas.diff_schema import (
     DiffPipelineRequest,
     DiffPipelineResponse,

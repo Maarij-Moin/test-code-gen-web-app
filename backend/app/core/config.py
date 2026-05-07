@@ -1,6 +1,6 @@
 """Application configuration loaded from environment variables."""
 
-from pydantic import Field
+from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -37,12 +37,42 @@ class Settings(BaseSettings):
     # Port for the FastAPI server.
     PORT: int = 8000
 
+    # PostgreSQL connection string (async).
+    DATABASE_URL: str = "postgresql+asyncpg://postgres:postgres@localhost:5432/ai_test_db"
+
+    # Redis connection string for cache and Celery.
+    REDIS_URL: str = "redis://localhost:6379/0"
+
+    # JWT configuration for user authentication.
+    JWT_SECRET_KEY: str = "change-me"
+    JWT_ALGORITHM: str = "HS256"
+    JWT_EXPIRE_MINUTES: int = 60
+
+    # GitHub webhook secret for signature validation.
+    GITHUB_WEBHOOK_SECRET: str = ""
+
+    # Celery broker/backend configuration.
+    CELERY_BROKER_URL: str = "redis://localhost:6379/0"
+    CELERY_RESULT_BACKEND: str = "redis://localhost:6379/0"
+
     # Enable debug mode and verbose logging when true.
     DEBUG: bool = False
 
+    @field_validator("DEBUG", mode="before")
+    @classmethod
+    def parse_debug_mode(cls, value):
+        if isinstance(value, str) and value.strip().lower() in {"release", "prod", "production"}:
+            return False
+        return value
+
     # Comma-separated CORS origins in .env, defaults to local dev origins.
     ALLOWED_ORIGINS: list[str] = Field(
-        default_factory=lambda: ["http://localhost:3000", "http://127.0.0.1:3000"]
+        default_factory=lambda: [
+            "http://localhost:3000",
+            "http://127.0.0.1:3000",
+            "http://localhost:5173",
+            "http://127.0.0.1:5173",
+        ]
     )
 
     # AWS deployment placeholders (future use: IAM, S3, ECS, etc.).

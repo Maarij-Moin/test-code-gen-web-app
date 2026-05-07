@@ -1,15 +1,185 @@
-version: "3.9"
+name: autonomous-ai-testing
 
 services:
   backend:
-    build: .
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    image: autonomous-ai-testing/backend:${IMAGE_TAG:-latest}
     container_name: ai-test-backend
-
-    ports:
-      - "8000:8000"
-
+    command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --proxy-headers
+    environment:
+      PROJECT_NAME: ${PROJECT_NAME:-Autonomous AI Testing Platform}
+      HOST: 0.0.0.0
+      PORT: 8000
+      DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-postgres}@postgres:5432/${POSTGRES_DB:-ai_test_db}
+      REDIS_URL: redis://redis:6379/0
+      CELERY_BROKER_URL: redis://redis:6379/0
+      CELERY_RESULT_BACKEND: redis://redis:6379/0
+      CHROMA_DIR: /app/chroma_polyglot_storage
+      REPO_BASE_DIR: /app/repo
+      ALLOWED_ORIGINS: ${ALLOWED_ORIGINS:-["http://localhost","http://localhost:8080","http://127.0.0.1:8080"]}
+      API_KEY: ${API_KEY}
+      JWT_SECRET_KEY: ${JWT_SECRET_KEY}
+      JWT_ALGORITHM: ${JWT_ALGORITHM:-HS256}
+      JWT_EXPIRE_MINUTES: ${JWT_EXPIRE_MINUTES:-60}
+      GITHUB_WEBHOOK_SECRET: ${GITHUB_WEBHOOK_SECRET:-}
+      DEBUG: ${DEBUG:-false}
     volumes:
-      - ./repo:/app/repo
-      - ./chroma_polyglot_storage:/app/chroma_polyglot_storage
+      - repo_data:/app/repo
+      - chroma_data:/app/chroma_polyglot_storage
+      - backend_logs:/app/logs
+    ports:
+      - "${BACKEND_PORT:-8000}:8000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      chromadb:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://127.0.0.1:8000/health || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 45s
+    restart: unless-stopped
+    networks:
+      - app_network
 
-    restart: always
+  celery_worker:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    image: autonomous-ai-testing/backend:${IMAGE_TAG:-latest}
+    container_name: ai-test-celery-worker
+    command: celery -A app.workers.celery_app.celery_app worker --loglevel=info --concurrency=${CELERY_CONCURRENCY:-2}
+    environment:
+      DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-postgres}@postgres:5432/${POSTGRES_DB:-ai_test_db}
+      REDIS_URL: redis://redis:6379/0
+      CELERY_BROKER_URL: redis://redis:6379/0
+      CELERY_RESULT_BACKEND: redis://redis:6379/0
+      CHROMA_DIR: /app/chroma_polyglot_storage
+      REPO_BASE_DIR: /app/repo
+      API_KEY: ${API_KEY}
+      JWT_SECRET_KEY: ${JWT_SECRET_KEY}
+      GITHUB_WEBHOOK_SECRET: ${GITHUB_WEBHOOK_SECRET:-}
+      DEBUG: ${DEBUG:-false}
+    volumes:
+      - repo_data:/app/repo
+      - chroma_data:/app/chroma_polyglot_storage
+      - backend_logs:/app/logs
+    depends_on:
+      backend:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "celery -A app.workers.celery_app.celery_app inspect ping -d celery@$${HOSTNAME} --timeout=10 >/dev/null 2>&1 || exit 1"]
+      interval: 60s
+      timeout: 15s
+      retries: 3
+      start_period: 60s
+    restart: unless-stopped
+    networks:
+      - app_network
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+      args:
+        VITE_API_BASE_URL: /api
+        VITE_API_KEY: ""
+    image: autonomous-ai-testing/frontend:${IMAGE_TAG:-latest}
+    container_name: ai-test-frontend
+    environment:
+      API_KEY: ${API_KEY}
+    ports:
+      - "${FRONTEND_PORT:-8080}:80"
+    depends_on:
+      backend:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://127.0.0.1/health || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
+    restart: unless-stopped
+    networks:
+      - app_network
+
+  postgres:
+    image: postgres:16-alpine
+    container_name: ai-test-postgres
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
+      POSTGRES_DB: ${POSTGRES_DB:-ai_test_db}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-postgres} -d ${POSTGRES_DB:-ai_test_db}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    restart: unless-stopped
+    networks:
+      - app_network
+
+  redis:
+    image: redis:7-alpine
+    container_name: ai-test-redis
+    command: redis-server --appendonly yes --save 60 1
+    volumes:
+      - redis_data:/data
+    ports:
+      - "${REDIS_PORT:-6379}:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+    networks:
+      - app_network
+
+  chromadb:
+    image: ghcr.io/chroma-core/chroma:0.5.23
+    container_name: ai-test-chromadb
+    environment:
+      IS_PERSISTENT: "TRUE"
+      PERSIST_DIRECTORY: /chroma/chroma
+      ANONYMIZED_TELEMETRY: "FALSE"
+    volumes:
+      - chroma_server_data:/chroma/chroma
+    ports:
+      - "${CHROMADB_PORT:-8001}:8000"
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/api/v2/heartbeat', timeout=5)\""]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
+    restart: unless-stopped
+    networks:
+      - app_network
+
+networks:
+  app_network:
+    driver: bridge
+
+volumes:
+  postgres_data:
+  redis_data:
+  repo_data:
+  chroma_data:
+  chroma_server_data:
+  backend_logs:

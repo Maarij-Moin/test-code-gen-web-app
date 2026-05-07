@@ -3,12 +3,13 @@ import hashlib
 import logging
 from langchain_community.vectorstores import Chroma
 
+from app.core.config import settings
 from app.services.embedding_model import _get_embeddings
 
 logger = logging.getLogger(__name__)
 
 # Base directory where all per-repo Chroma DBs are stored
-CHROMA_BASE_DIR = "./chroma_polyglot_storage"
+CHROMA_BASE_DIR = settings.CHROMA_BASE_DIR
 
 def make_repo_id(repo_path: str) -> str:
     """Return a stable, filesystem-safe ID derived from the canonical repo path.

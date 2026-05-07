@@ -13,7 +13,7 @@ class RepoUploadRequest(BaseModel):
     )
 
     class Config:
-        schema_extra = {
+        json_schema_extra = {
             "example": {
                 "repo_url": "https://github.com/org/project.git",
             }
@@ -28,7 +28,7 @@ class RepoIndexRequest(BaseModel):
     )
 
     class Config:
-        schema_extra = {
+        json_schema_extra = {
             "example": {
                 "repo_path": "C:/repos/my-project",
             }
@@ -43,7 +43,7 @@ class CloneAndIndexRequest(BaseModel):
     )
 
     class Config:
-        schema_extra = {
+        json_schema_extra = {
             "example": {
                 "repo_url": "https://github.com/org/project.git",
             }
@@ -63,7 +63,7 @@ class RepoResponse(BaseModel):
     )
 
     class Config:
-        schema_extra = {
+        json_schema_extra = {
             "example": {
                 "success": True,
                 "message": "Repository cloned and indexed successfully.",
@@ -81,7 +81,7 @@ class RepoQueryRequest(BaseModel):
     k: int = Field(5, ge=1, le=50, description="Number of results to return.")
 
     class Config:
-        schema_extra = {
+        json_schema_extra = {
             "example": {
                 "repo_id": "repo_7c867f35d4e397a2",
                 "query": "How is the auth middleware configured?",

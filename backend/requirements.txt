@@ -3,10 +3,29 @@ fastapi
 uvicorn[standard]
 pydantic
 pydantic-settings
+python-dotenv
+email-validator
 python-multipart
 
+# Auth + security
+python-jose[cryptography]
+passlib[bcrypt]
+bcrypt
+
+# Database
+sqlalchemy[asyncio]>=2.0,<3.0
+alembic>=1.13,<2.0
+asyncpg>=0.29,<1.0
+
+# Background jobs
+celery
+redis
+
+# Agent orchestration
+langgraph
+
 # Git integration
-gitpython
+GitPython
 
 # LangChain stack (text splitting, document model, community integrations)
 langchain
@@ -24,3 +43,7 @@ transformers
 # PyTorch (required by sentence-transformers for model inference)
 # Use the CPU-only build to keep install size small; swap for a GPU build if needed
 torch --index-url https://download.pytorch.org/whl/cpu
+
+# Runtime validation and local test execution
+pytest
+httpx
