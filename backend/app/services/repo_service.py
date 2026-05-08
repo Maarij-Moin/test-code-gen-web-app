@@ -87,3 +87,54 @@ def pull_repo(repo_path: str) -> None:
         logger.info("Pulled latest changes for '%s'.", repo_path)
     except Exception as exc:
         raise RuntimeError(f"Failed to pull repository '{repo_path}': {exc}") from exc
+
+
+def commit_and_push_tests(repo_path: str, branch_name: str, commit_message: str) -> None:
+    """Commit auto_tests/ directory and push to a new remote branch.
+    
+    Uses GITHUB_TOKEN for authentication if available.
+    """
+    token = os.environ.get("GITHUB_TOKEN")
+    if not token:
+        logger.warning("GITHUB_TOKEN not found, skipping push.")
+        return
+
+    try:
+        repo = git.Repo(repo_path)
+        
+        # Create and checkout new branch
+        if branch_name in [b.name for b in repo.branches]:
+            repo.git.checkout(branch_name)
+        else:
+            repo.git.checkout('-b', branch_name)
+            
+        # Add auto_tests directory
+        test_dir = os.path.join(repo_path, "auto_tests")
+        if not os.path.exists(test_dir):
+            logger.info("No auto_tests directory found to commit.")
+            return
+            
+        repo.git.add("auto_tests/")
+        
+        # Check if there are changes to commit
+        if not repo.is_dirty() and not repo.untracked_files:
+            logger.info("No changes to commit in auto_tests/")
+            return
+            
+        repo.git.commit('-m', commit_message)
+        
+        # Update remote URL to include token
+        origin = repo.remotes.origin
+        remote_url = origin.url
+        if remote_url.startswith("https://") and "@" not in remote_url:
+            auth_url = remote_url.replace("https://", f"https://x-access-token:{token}@")
+            origin.set_url(auth_url)
+            
+        repo.git.push('--set-upstream', 'origin', branch_name)
+        logger.info("Pushed tests to branch '%s'", branch_name)
+        
+        # Restore URL
+        origin.set_url(remote_url)
+        
+    except Exception as exc:
+        raise RuntimeError(f"Failed to commit and push tests: {exc}") from exc

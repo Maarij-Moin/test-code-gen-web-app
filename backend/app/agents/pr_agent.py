@@ -48,6 +48,9 @@ import json
 from app.agents.planner_agent import TestPlan
 from app.agents.test_generator_agent import GeneratedTestArtifact
 from app.agents.validation_agent import ValidationResult
+from app.services.repo_service import commit_and_push_tests
+from app.services.github_service import create_pull_request
+import git
 
 logger = logging.getLogger(__name__)
 
@@ -328,6 +331,39 @@ def run(state: dict[str, Any]) -> dict[str, Any]:
             validation_result=validation_result,
             generation_stats=generation_stats,
         )
+        
+        # Automatically commit, push, and open PR
+        if os.environ.get("GITHUB_TOKEN"):
+            branch_name = f"auto-tests/{summary.commit_sha[:8]}"
+            repo_path = plan.repo_path
+            
+            # 1. Commit and push
+            commit_and_push_tests(
+                repo_path=repo_path,
+                branch_name=branch_name,
+                commit_message=summary.title
+            )
+            
+            # 2. Create PR
+            try:
+                local_repo = git.Repo(repo_path)
+                remote_url = list(local_repo.remotes.origin.urls)[0]
+                
+                # Strip auth token from remote_url if present
+                if "@" in remote_url and "github.com" in remote_url:
+                    remote_url = "https://github.com/" + remote_url.split("github.com/")[1]
+                
+                create_pull_request(
+                    repo_url=remote_url,
+                    branch_name=branch_name,
+                    title=summary.title,
+                    body=summary.body,
+                    changed_files=[a.target_file for a in artifacts],
+                    commit_message=summary.title
+                )
+            except Exception as e:
+                logger.error(f"[pr_agent] Failed to create GitHub PR: {e}")
+                
         state["pr_summary"] = summary
         state.setdefault("error", None)
     except Exception as exc:  # noqa: BLE001

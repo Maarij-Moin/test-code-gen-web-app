@@ -4,7 +4,7 @@ from sqlalchemy import select
 from app.db.database import AsyncSessionLocal
 from app.db.models import Repository
 from app.services.repo_service import clone_repo, pull_repo
-from app.workers.generation_tasks import trigger_diff_job
+from app.workers.generation_tasks import trigger_generation_job
 import git
 
 logger = logging.getLogger(__name__)
@@ -44,7 +44,7 @@ async def check_repos_for_updates():
                         # Create job
                         job = Job(
                             repo_id=repo.id,
-                            job_type="diff",
+                            job_type="generate",
                             status="queued",
                             commit_sha=latest_commit,
                             payload={"branch": repo.default_branch}
@@ -53,7 +53,7 @@ async def check_repos_for_updates():
                         await session.commit()
                         
                         # Trigger Celery
-                        trigger_diff_job.delay(repo_url=repo.repo_url, commit_sha=latest_commit)
+                        trigger_generation_job.delay(repo_url=repo.repo_url, commit_sha=latest_commit)
                 except Exception as e:
                     logger.error(f"[monitoring] Failed to check repo {repo.name}: {e}")
     except Exception as e:
