@@ -59,33 +59,22 @@ class IngestRequest(BaseModel):
         }
 
 
-class JobStatusResponse(BaseModel):
-    """API representation of an IngestionJob."""
+class JobStep(BaseModel):
+    name: str
+    status: str
+    duration_ms: int | None = None
 
-    job_id: str = Field(..., description="Unique job identifier (UUID).")
-    repo_url: str
-    repo_name: str | None = None
-    local_path: str | None = None
-    vector_repo_id: str | None = None
-    status: str = Field(..., description="One of PENDING | CLONING | INDEXING | COMPLETED | FAILED.")
-    detail: str | None = Field(None, description="Human-readable progress message.")
-    error_message: str | None = Field(None, description="Full error text when status=FAILED.")
-    created_at: str | None = None
-    started_at: str | None = None
-    cloning_started_at: str | None = None
-    indexing_started_at: str | None = None
-    completed_at: str | None = None
-
-    class Config:
-        json_schema_extra = {
-            "example": {
-                "job_id": "3d6f4e1a-...",
-                "repo_url": "https://github.com/org/project.git",
-                "status": "INDEXING",
-                "detail": "Chunking and embedding codebase into ChromaDB …",
-            }
-        }
-
+class JobResponse(BaseModel):
+    id: str
+    repo_id: str
+    repo_name: str
+    type: str
+    status: str
+    progress: int
+    started_at: str
+    finished_at: str | None = None
+    message: str | None = None
+    steps: list[JobStep] = Field(default_factory=list)
 
 class IngestResponse(BaseModel):
     """Immediate response returned when a job is accepted."""
@@ -108,26 +97,51 @@ class IngestResponse(BaseModel):
 # Helper
 # ---------------------------------------------------------------------------
 
-def _job_to_response(job) -> JobStatusResponse:
-    """Map an IngestionJob ORM instance to the API response schema."""
+def _job_to_response(job) -> JobResponse:
+    """Map an IngestionJob ORM instance to the API response schema for frontend."""
 
     def _fmt(dt) -> str | None:
         return dt.isoformat() if dt else None
 
-    return JobStatusResponse(
-        job_id=str(job.id),
-        repo_url=job.repo_url,
-        repo_name=job.repo_name,
-        local_path=job.local_path,
-        vector_repo_id=job.vector_repo_id,
-        status=job.status,
-        detail=job.detail,
-        error_message=job.error_message,
-        created_at=_fmt(job.created_at),
-        started_at=_fmt(job.started_at),
-        cloning_started_at=_fmt(job.cloning_started_at),
-        indexing_started_at=_fmt(job.indexing_started_at),
-        completed_at=_fmt(job.completed_at),
+    # Map status to frontend status: queued | running | succeeded | failed | cancelled
+    mapped_status = job.status.lower()
+    if mapped_status in ("pending", "queued"):
+        status_enum = "queued"
+    elif mapped_status in ("cloning", "indexing", "running"):
+        status_enum = "running"
+    elif mapped_status in ("completed", "succeeded"):
+        status_enum = "succeeded"
+    elif mapped_status == "failed":
+        status_enum = "failed"
+    else:
+        status_enum = "queued"
+        
+    # Calculate progress heuristics based on legacy status
+    progress = 0
+    if status_enum == "succeeded":
+        progress = 100
+    elif mapped_status == "cloning":
+        progress = 20
+    elif mapped_status == "indexing":
+        progress = 50
+
+    steps = []
+    if job.cloning_started_at:
+        steps.append(JobStep(name="Clone Repository", status="succeeded" if mapped_status != "cloning" else "running"))
+    if job.indexing_started_at:
+        steps.append(JobStep(name="Index Codebase", status="succeeded" if mapped_status == "completed" else "running"))
+        
+    return JobResponse(
+        id=str(job.id),
+        repo_id=str(job.vector_repo_id or job.repo_url),
+        repo_name=job.repo_name or job.repo_url.split("/")[-1].replace(".git", ""),
+        type="index",
+        status=status_enum,
+        progress=progress,
+        started_at=_fmt(job.started_at) or _fmt(job.created_at) or "",
+        finished_at=_fmt(job.completed_at),
+        message=job.detail or job.error_message,
+        steps=steps,
     )
 
 
@@ -178,14 +192,14 @@ async def submit_ingestion_job(
 
 @router.get(
     "/{job_id}",
-    response_model=JobStatusResponse,
+    response_model=JobResponse,
     summary="Poll a single ingestion job",
     responses={
         200: {"description": "Job found — inspect `status` and `detail`."},
         404: {"description": "No job with that ID exists."},
     },
 )
-async def get_job_status(job_id: str) -> JobStatusResponse:
+async def get_job_status(job_id: str) -> JobResponse:
     """Return the current status of an ingestion job.
 
     Poll this endpoint every few seconds until ``status`` is one of:
@@ -201,7 +215,7 @@ async def get_job_status(job_id: str) -> JobStatusResponse:
 
 @router.get(
     "",
-    response_model=list[JobStatusResponse],
+    response_model=list[JobResponse],
     summary="List ingestion jobs",
     responses={
         200: {"description": "Paginated list of ingestion jobs."},
@@ -216,7 +230,7 @@ async def list_ingestion_jobs(
     ),
     limit: int = Query(default=20, ge=1, le=200, description="Max rows to return."),
     offset: int = Query(default=0, ge=0, description="Row offset for pagination."),
-) -> list[JobStatusResponse]:
+) -> list[JobResponse]:
     """List all ingestion jobs, optionally filtered by status."""
     jobs = await list_jobs(status=status, limit=limit, offset=offset)
     return [_job_to_response(j) for j in jobs]

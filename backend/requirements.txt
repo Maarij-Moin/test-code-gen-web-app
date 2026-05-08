@@ -26,6 +26,7 @@ langgraph
 
 # Git integration
 GitPython
+PyGithub
 
 # LangChain stack (text splitting, document model, community integrations)
 langchain
@@ -45,3 +46,4 @@ httpx
 
 # LLM providers (OpenAI-compatible: OpenAI, Azure, Ollama)
 openai>=1.0,<2.0   # pip install openai
+anthropic>=0.20.0

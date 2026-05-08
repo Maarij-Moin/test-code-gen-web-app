@@ -343,6 +343,132 @@ class OpenAIProvider(LLMProvider):
 
 
 # ---------------------------------------------------------------------------
+# Provider: Anthropic
+# ---------------------------------------------------------------------------
+
+class AnthropicProvider(LLMProvider):
+    """Anthropic Claude provider using the official anthropic package."""
+
+    name = "anthropic"
+
+    def __init__(
+        self,
+        api_key: str,
+        model: str = "claude-3-haiku-20240307",
+        temperature: float = 0.2,
+        max_tokens: int = 4096,
+        timeout: int = 120,
+        max_retries: int = 3,
+    ) -> None:
+        self._api_key = api_key
+        self._model = model
+        self._temperature = temperature
+        self._max_tokens = max_tokens
+        self._timeout = timeout
+        self._max_retries = max_retries
+
+        try:
+            import anthropic  # type: ignore[import-untyped]
+            self._client = anthropic.Anthropic(
+                api_key=api_key,
+                timeout=timeout,
+                max_retries=0,  # Handle retries manually
+            )
+        except ImportError as exc:
+            raise RuntimeError(
+                "anthropic package is not installed. "
+                "Run: pip install anthropic"
+            ) from exc
+
+    def complete(self, request: LLMRequest) -> LLMResponse:
+        import anthropic  # type: ignore[import-untyped]
+
+        model = request.model or self._model
+        
+        # Anthropic separates system prompt from messages
+        system_content = ""
+        anthropic_messages = []
+        for m in request.messages:
+            if m.role == "system":
+                system_content += m.content + "\n"
+            else:
+                anthropic_messages.append({"role": m.role, "content": m.content})
+
+        last_exc: Exception | None = None
+        for attempt in range(1, self._max_retries + 1):
+            t0 = time.monotonic()
+            try:
+                kwargs: dict[str, Any] = {
+                    "model": model,
+                    "messages": anthropic_messages,
+                    "temperature": request.temperature or self._temperature,
+                    "max_tokens": request.max_tokens or self._max_tokens,
+                }
+                if system_content:
+                    kwargs["system"] = system_content.strip()
+                if request.stop:
+                    kwargs["stop_sequences"] = request.stop
+                kwargs.update(request.extra)
+
+                resp = self._client.messages.create(**kwargs)
+                latency = int((time.monotonic() - t0) * 1000)
+
+                content = ""
+                for block in resp.content:
+                    if block.type == "text":
+                        content += block.text
+
+                logger.info(
+                    "[llm_service] %s → tokens: prompt=%d completion=%d latency=%dms",
+                    model,
+                    resp.usage.input_tokens,
+                    resp.usage.output_tokens,
+                    latency,
+                )
+                return LLMResponse(
+                    content=content,
+                    model=model,
+                    provider=self.name,
+                    prompt_tokens=resp.usage.input_tokens,
+                    completion_tokens=resp.usage.output_tokens,
+                    latency_ms=latency,
+                    finish_reason=resp.stop_reason or "stop",
+                )
+
+            except anthropic.RateLimitError as exc:
+                last_exc = exc
+                wait = 2 ** attempt
+                logger.warning(
+                    "[llm_service] Rate limit on attempt %d/%d — sleeping %ds.",
+                    attempt, self._max_retries, wait,
+                )
+                time.sleep(wait)
+            except anthropic.APIStatusError as exc:
+                last_exc = exc
+                if exc.status_code and exc.status_code < 500:
+                    raise RuntimeError(
+                        f"Anthropic API error {exc.status_code}: {exc.message}"
+                    ) from exc
+                wait = 2 ** attempt
+                logger.warning(
+                    "[llm_service] Server error %d on attempt %d/%d — sleeping %ds.",
+                    exc.status_code, attempt, self._max_retries, wait,
+                )
+                time.sleep(wait)
+            except Exception as exc:  # noqa: BLE001
+                last_exc = exc
+                logger.exception("[llm_service] Unexpected error on attempt %d: %s", attempt, exc)
+                if attempt >= self._max_retries:
+                    break
+                time.sleep(2 ** attempt)
+
+        raise RuntimeError(
+            f"LLM request failed after {self._max_retries} attempt(s). "
+            f"Last error: {last_exc}"
+        ) from last_exc
+
+
+# ---------------------------------------------------------------------------
 # Provider registry + factory
 # ---------------------------------------------------------------------------
 
@@ -351,6 +477,8 @@ _PROVIDER_REGISTRY: dict[str, type[LLMProvider]] = {
     "openai":     OpenAIProvider,
     "azure":      OpenAIProvider,   # Same class, different env config
     "ollama":     OpenAIProvider,   # Same class, local base URL
+    "openrouter": OpenAIProvider,   # Same class, OpenRouter base URL
+    "anthropic":  AnthropicProvider,
 }
 
 
@@ -358,7 +486,7 @@ def _build_openai_provider(provider_name: str) -> OpenAIProvider:
     """Construct an ``OpenAIProvider`` from environment variables.
 
     Args:
-        provider_name: "openai" | "azure" | "ollama"
+        provider_name: "openai" | "azure" | "ollama" | "openrouter"
 
     Returns:
         Configured ``OpenAIProvider`` instance.
@@ -366,27 +494,50 @@ def _build_openai_provider(provider_name: str) -> OpenAIProvider:
     Raises:
         RuntimeError: If required env vars are missing.
     """
-    api_key = os.environ.get("OPENAI_API_KEY", "")
-    if provider_name in {"openai", "azure"} and not api_key:
+    if provider_name == "openrouter":
+        api_key = os.environ.get("OPENROUTER_API_KEY", "")
+    else:
+        api_key = os.environ.get("OPENAI_API_KEY", "")
+        
+    if provider_name in {"openai", "azure", "openrouter"} and not api_key:
         raise RuntimeError(
-            f"OPENAI_API_KEY is required for LLM_PROVIDER={provider_name}. "
+            f"API Key is required for LLM_PROVIDER={provider_name}. "
             "Set it in your .env file."
         )
 
     model = os.environ.get("OPENAI_MODEL", "gpt-4o-mini")
     base_url: str | None = os.environ.get("OPENAI_BASE_URL") or None
     api_version: str | None = None
+    
     if provider_name == "azure":
         api_version = os.environ.get("AZURE_API_VERSION", "2024-02-01")
-    if provider_name == "ollama":
+    elif provider_name == "ollama":
         base_url = base_url or "http://localhost:11434/v1"
         api_key = api_key or "ollama"  # Ollama ignores the key but requires a value
+    elif provider_name == "openrouter":
+        base_url = base_url or "https://openrouter.ai/api/v1"
 
     return OpenAIProvider(
         api_key=api_key,
         model=model,
         base_url=base_url,
         api_version=api_version,
+        temperature=float(os.environ.get("LLM_TEMPERATURE", "0.2")),
+        max_tokens=int(os.environ.get("LLM_MAX_TOKENS", "4096")),
+        timeout=int(os.environ.get("LLM_TIMEOUT_SECONDS", "120")),
+        max_retries=int(os.environ.get("LLM_MAX_RETRIES", "3")),
+    )
+
+def _build_anthropic_provider() -> AnthropicProvider:
+    api_key = os.environ.get("ANTHROPIC_API_KEY", "")
+    if not api_key:
+        raise RuntimeError(
+            "ANTHROPIC_API_KEY is required for LLM_PROVIDER=anthropic. "
+            "Set it in your .env file."
+        )
+    return AnthropicProvider(
+        api_key=api_key,
+        model=os.environ.get("ANTHROPIC_MODEL", "claude-3-haiku-20240307"),
         temperature=float(os.environ.get("LLM_TEMPERATURE", "0.2")),
         max_tokens=int(os.environ.get("LLM_MAX_TOKENS", "4096")),
         timeout=int(os.environ.get("LLM_TIMEOUT_SECONDS", "120")),
@@ -418,8 +569,11 @@ def build_provider(provider_name: str | None = None) -> LLMProvider:
     if name == "mock":
         return MockLLMProvider()
 
-    if name in {"openai", "azure", "ollama"}:
+    if name in {"openai", "azure", "ollama", "openrouter"}:
         return _build_openai_provider(name)
+        
+    if name == "anthropic":
+        return _build_anthropic_provider()
 
     # Future custom providers instantiated with no args.
     return _PROVIDER_REGISTRY[name]()
@@ -503,3 +657,35 @@ def complete(
         provider.name, model or "(default)", len(system_prompt) + len(user_prompt),
     )
     return provider.complete(request)
+
+
+def generate_tests(prompt: str) -> str:
+    """High-level utility specifically for generating test code from a prompt.
+    
+    Args:
+        prompt: The full instructional prompt.
+        
+    Returns:
+        Only the generated test code block as a string.
+    """
+    system_prompt = (
+        "You are an expert AI test automation engineer. "
+        "Write precise, valid test code based on the provided prompt. "
+        "Do not include any conversational filler, markdown formatting, or explanations "
+        "other than the code itself unless explicitly requested."
+    )
+    
+    try:
+        response = complete(system_prompt=system_prompt, user_prompt=prompt)
+        # Strip markdown code block formatting if present
+        content = response.content.strip()
+        if content.startswith("```"):
+            lines = content.split("\n")
+            if len(lines) >= 2:
+                # Remove first line (e.g., ```python) and last line (```)
+                if lines[-1].strip() == "```":
+                    content = "\n".join(lines[1:-1])
+        return content
+    except Exception as exc:
+        logger.error("[llm_service] generate_tests failed: %s", exc)
+        raise

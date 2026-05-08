@@ -24,6 +24,11 @@ logger = logging.getLogger(__name__)
 async def lifespan(app: FastAPI):
     logger.info("Automated Test-Generation API starting up …")
 
+    # Start background monitoring loop
+    import asyncio
+    from app.services.monitoring_service import monitoring_loop
+    monitor_task = asyncio.create_task(monitoring_loop())
+
     # Create all tables (idempotent — safe to call every startup)
     try:
         from app.db.database import engine
@@ -51,6 +56,7 @@ async def lifespan(app: FastAPI):
     yield
 
     logger.info("Automated Test-Generation API shutting down …")
+    monitor_task.cancel()
     try:
         from app.db.database import dispose_engine
         await dispose_engine()
@@ -142,3 +148,20 @@ _mount_router("app.api.routes.test_routes")
 @app.get("/health", tags=["health"], summary="Service health check")
 def health():
     return {"status": "ok"}
+
+
+# ---------------------------------------------------------------------------
+# WebSocket
+# ---------------------------------------------------------------------------
+from fastapi import WebSocket
+from app.services.websocket_service import manager
+
+@app.websocket("/ws")
+async def websocket_endpoint(websocket: WebSocket):
+    await manager.connect(websocket)
+    try:
+        while True:
+            # We don't expect messages from client for now, just keep connection open
+            await websocket.receive_text()
+    except Exception:
+        manager.disconnect(websocket)
