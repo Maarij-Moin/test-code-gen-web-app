@@ -38,6 +38,7 @@ x-backend-env: &backend-env
   VALIDATION_TIMEOUT_SECONDS: ${VALIDATION_TIMEOUT_SECONDS:-120}
   VALIDATION_MAX_REPAIRS: ${VALIDATION_MAX_REPAIRS:-3}
   ALLOWED_ORIGINS: ${ALLOWED_ORIGINS:-["http://localhost","http://localhost:8080","http://localhost:5173","http://127.0.0.1:8080","http://127.0.0.1:5173"]}
+  ANONYMIZED_TELEMETRY: "FALSE"
 
 x-backend-volumes: &backend-volumes
   - repo_data:/app/repo
