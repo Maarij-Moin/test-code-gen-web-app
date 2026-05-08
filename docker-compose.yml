@@ -183,3 +183,4 @@ volumes:
   chroma_data:
   chroma_server_data:
   backend_logs:
+  auto_tests:

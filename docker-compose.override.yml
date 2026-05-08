@@ -76,10 +76,29 @@ services:
 
   # ── Flower (no auth in dev) ───────────────────────────────────────────────
   flower:
+    build:
+      context:    ./backend
+      dockerfile: Dockerfile
+      target:     deps
+    image: autonomous-ai-testing/backend:${IMAGE_TAG:-latest}
+    container_name: ai-test-flower
     command: >
       celery -A app.workers.celery_app.celery_app flower
         --port=5555
         --url_prefix=flower
+    ports:
+      - "5555:5555"
+    depends_on:
+      redis:
+        condition: service_healthy
+    volumes:
+      - ./backend:/app
+    environment:
+      CELERY_BROKER_URL: redis://redis:6379/0
+      CELERY_RESULT_BACKEND: redis://redis:6379/0
+    networks:
+      - app_network
+    restart: unless-stopped
 
   # ── Frontend — replaced by Vite dev server ────────────────────────────────
   # In development the React app runs on the host via `pnpm dev` (port 5173).
