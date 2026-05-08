@@ -9,8 +9,7 @@ python-multipart
 
 # Auth + security
 python-jose[cryptography]
-passlib[bcrypt]
-bcrypt
+bcrypt>=4.0
 
 # Database
 sqlalchemy[asyncio]>=2.0,<3.0
