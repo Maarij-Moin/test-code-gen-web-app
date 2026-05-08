@@ -9,15 +9,9 @@ from sqlalchemy.exc import OperationalError
 
 from app.core.logging_config import setup_logging
 from app.core.config import settings
-from app.routes.auth_routes import router as auth_router
-from app.routes.job_routes import router as job_router
-from app.routes.webhook_routes import router as webhook_router      # production: push + PR + replay protection
-from app.api.routes.repo_routes import router as repo_router
-from app.api.routes.test_routes import router as test_router
-from app.db.database import init_auth_db
 
 # ---------------------------------------------------------------------------
-# Logging — centralized config (console + rotating file handlers)
+# Logging
 # ---------------------------------------------------------------------------
 setup_logging()
 logger = logging.getLogger(__name__)
@@ -29,16 +23,39 @@ logger = logging.getLogger(__name__)
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     logger.info("Automated Test-Generation API starting up …")
-    await init_auth_db()
-    # Ensure the ingestion_jobs table exists (uses the same SQLite AuthBase).
-    # No Alembic migration is needed — create_all is idempotent.
-    from app.models.job_model import IngestionJob  # noqa: F401  (side-effect import)
-    from app.models.user_model import AuthBase
-    from app.db.database import engine
-    async with engine.begin() as conn:
-        await conn.run_sync(AuthBase.metadata.create_all)
+
+    # Create all tables (idempotent — safe to call every startup)
+    try:
+        from app.db.database import engine
+
+        # 1. Auth tables (users, ingestion_jobs — AuthBase)
+        from app.models.user_model import AuthBase
+        from app.models.job_model import IngestionJob  # noqa: F401
+        async with engine.begin() as conn:
+            await conn.run_sync(AuthBase.metadata.create_all)
+
+        # 2. Platform tables (repositories, jobs, webhook_events, etc — Base)
+        from app.db.base import Base
+        from app.db.models import (  # noqa: F401 — side-effect imports
+            User as PgUser, Repository, Job, WebhookEvent,
+            GeneratedTest, ValidationRun,
+        )
+        async with engine.begin() as conn:
+            await conn.run_sync(Base.metadata.create_all)
+
+        logger.info("Database initialized successfully.")
+    except Exception as exc:
+        logger.error("Database initialization failed: %s", exc)
+        logger.error("The API will start but database operations will fail.")
+
     yield
+
     logger.info("Automated Test-Generation API shutting down …")
+    try:
+        from app.db.database import dispose_engine
+        await dispose_engine()
+    except Exception:
+        pass
 
 
 # ---------------------------------------------------------------------------
@@ -59,7 +76,7 @@ app = FastAPI(
 )
 
 # ---------------------------------------------------------------------------
-# CORS — allow all origins in development; tighten for production
+# CORS
 # ---------------------------------------------------------------------------
 app.add_middleware(
     CORSMiddleware,
@@ -69,17 +86,12 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+
 # ---------------------------------------------------------------------------
-# Global exception handler — catches anything that slipped through the
-# route-level handlers and ensures a JSON error body is always returned.
+# Exception handlers
 # ---------------------------------------------------------------------------
 @app.exception_handler(Exception)
 async def global_exception_handler(request: Request, exc: Exception) -> JSONResponse:
-    """Catch-all handler for unhandled exceptions.
-
-    Logs the full traceback at ERROR level (without leaking it to the caller)
-    and returns a generic 500 JSON response.
-    """
     logger.error(
         "Unhandled exception on %s %s: %s\n%s",
         request.method,
@@ -89,33 +101,39 @@ async def global_exception_handler(request: Request, exc: Exception) -> JSONResp
     )
     return JSONResponse(
         status_code=500,
-        content={
-            "detail": "An unexpected internal error occurred. Check server logs for details."
-        },
+        content={"detail": "An unexpected internal error occurred."},
     )
 
 
 @app.exception_handler(OperationalError)
 async def database_exception_handler(request: Request, exc: OperationalError) -> JSONResponse:
-    logger.error(
-        "Database connection failed on %s %s: %s",
-        request.method,
-        request.url.path,
-        exc,
-    )
+    logger.error("Database error on %s %s: %s", request.method, request.url.path, exc)
     return JSONResponse(
         status_code=503,
-        content={"detail": "Database is unavailable. Start PostgreSQL and run migrations."},
+        content={"detail": "Database is unavailable."},
     )
 
+
 # ---------------------------------------------------------------------------
-# Routers
+# Routers — import with error handling so one broken router doesn't kill the app
 # ---------------------------------------------------------------------------
-app.include_router(auth_router)
-app.include_router(job_router)      # GET/POST /jobs/*
-app.include_router(webhook_router)  # POST /webhooks/github  GET /webhooks/health
-app.include_router(repo_router)
-app.include_router(test_router)
+def _mount_router(module_path: str, attr: str = "router"):
+    """Import a router module and mount it, logging errors instead of crashing."""
+    try:
+        import importlib
+        mod = importlib.import_module(module_path)
+        router = getattr(mod, attr)
+        app.include_router(router)
+        logger.debug("Mounted router: %s", module_path)
+    except Exception as exc:
+        logger.error("Failed to mount router %s: %s", module_path, exc)
+
+
+_mount_router("app.routes.auth_routes")
+_mount_router("app.routes.job_routes")
+_mount_router("app.routes.webhook_routes")
+_mount_router("app.api.routes.repo_routes")
+_mount_router("app.api.routes.test_routes")
 
 
 # ---------------------------------------------------------------------------
@@ -123,5 +141,4 @@ app.include_router(test_router)
 # ---------------------------------------------------------------------------
 @app.get("/health", tags=["health"], summary="Service health check")
 def health():
-    """Returns 200 OK when the service is running."""
     return {"status": "ok"}
