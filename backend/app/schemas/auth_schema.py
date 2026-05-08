@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import uuid
 from pydantic import BaseModel, ConfigDict, EmailStr, Field
 
 
@@ -17,7 +18,7 @@ class UserLogin(BaseModel):
 
 
 class UserResponse(BaseModel):
-    id: str
+    id: uuid.UUID
     email: EmailStr
     full_name: str | None = None
     is_active: bool
